@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   User, Lock, LayoutDashboard, UserPlus, FileText, 
   Wallet, PieChart, LogOut, ChevronRight, CheckCircle2,
@@ -10,47 +10,35 @@ import {
 // ==========================================
 // CONFIGURATION & API SETUP
 // ==========================================
-// Connected directly to your live Google Apps Script Web App URL
 const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzuZ8hJYGPZPc8oCCEEH97mlC3YCdPCCtKM8cUC88JBXGDu7fm00bRuy3OPHJs3xdHdHw/exec';
-const USE_MOCK_BACKEND = false; // Set to false to use your live Google Sheets backend
-
-// ==========================================
-// MOCK DATA (Fallback for testing or offline)
-// ==========================================
-const mockSubscriptions = [
-  { id: 'S1', staffId: 'admin', entryType: 'New', name: 'Ahmed Khan', area: 'Downtown', mobile: '1234567890', whatsapp: '1234567890', email: 'ahmed@example.com', sponsorId: '', date: new Date().toISOString() },
-  { id: 'S2', staffId: 'admin', entryType: 'Renewal', name: 'Sarah Ali', area: 'North Hills', mobile: '0987654321', whatsapp: '0987654321', email: 'sarah@example.com', sponsorId: 'SPO-1', date: new Date().toISOString() },
-  { id: 'S3', staffId: 'user1', entryType: 'New', name: 'Zaid', area: 'Uptown', mobile: '1111111111', whatsapp: '', email: '', sponsorId: '', date: new Date().toISOString() },
-  { id: 'S4', staffId: 'user2', entryType: 'New', name: 'Omar', area: 'Southside', mobile: '2222222222', whatsapp: '', email: '', sponsorId: '', date: new Date().toISOString() },
-  { id: 'S5', staffId: 'user2', entryType: 'Renewal', name: 'Hassan', area: 'West End', mobile: '3333333333', whatsapp: '', email: '', sponsorId: '', date: new Date().toISOString() }
-];
-const mockPayments = [
-  { id: 'P1', staffId: 'admin', subId: 'S1', amount: 3.000, type: 'Cash', date: new Date().toISOString() },
-];
-const mockTransfers = [
-  { id: 'T1', staffId: 'admin', amount: 1.500, reference: 'Bank Deposit', date: new Date().toISOString() }
-];
-const mockSponsors = [
-  { id: 'SPO-1', staffId: 'admin', name: 'Ali Ahmed', count: 10, amount: 30.000, date: new Date().toISOString() }
-];
+const USE_MOCK_BACKEND = false;
 
 // ==========================================
 // MAIN APP COMPONENT
 // ==========================================
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [user, setUser] = useState(null);
+  // Use LocalStorage for Auth state to stay logged in on refresh!
+  const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('auth') === 'true');
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem('user');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [recordTab, setRecordTab] = useState('subs'); // Lifted state to control sub-tabs from Dashboard
   
   // App Data State
   const [subscriptions, setSubscriptions] = useState([]);
   const [payments, setPayments] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [sponsors, setSponsors] = useState([]);
-  const [allUsers, setAllUsers] = useState([]); // NEW: State to hold all users for leaderboard
+  const [allUsers, setAllUsers] = useState([]); // Store all users for leaderboard
   
   const [isLoading, setIsLoading] = useState(false);
   const [notification, setNotification] = useState(null);
+  
+  // Pull to refresh state
+  const [ptrHeight, setPtrHeight] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // --- USER SPECIFIC FILTERING ---
   const mySubs = useMemo(() => subscriptions.filter(s => s.staffId === user?.id), [subscriptions, user]);
@@ -63,12 +51,24 @@ export default function App() {
     myPayments.filter(p => p.type === 'Cash').reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
   , [myPayments]);
   
+  const totalOnlineReceived = useMemo(() => 
+    myPayments.filter(p => p.type === 'Online').reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
+  , [myPayments]);
+  
   const totalTransferred = useMemo(() => 
     myTransfers.reduce((sum, t) => sum + (parseFloat(t.amount) || 0), 0)
   , [myTransfers]);
 
-  const cashInHand = totalCashReceived - totalTransferred;
+  // Total balance now includes both Cash & Online
+  const totalBalance = totalCashReceived + totalOnlineReceived - totalTransferred;
   const totalSubscriptions = mySubs.length;
+
+  // Fetch initial data when authenticated or when app loads from cache
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadInitialData();
+    }
+  }, [isAuthenticated]);
 
   // Normalizers to map Google Sheets headers gracefully to frontend keys
   const normalizeSub = (s) => ({
@@ -121,8 +121,6 @@ export default function App() {
     try {
       if (USE_MOCK_BACKEND) {
         await new Promise(r => setTimeout(r, 800)); // Simulate network
-        if (action === 'AUTHENTICATE') return { success: true, data: { user: { id: payload.username, name: 'Admin Mock', target: 25 } } };
-        if (action === 'FETCH_DATA') return { success: true, data: { subscriptions: mockSubscriptions, payments: mockPayments, transfers: mockTransfers, sponsors: mockSponsors } };
         return { success: true, data: payload };
       } else {
         const response = await fetch(GAS_WEB_APP_URL, {
@@ -164,7 +162,7 @@ export default function App() {
       setPayments((res.data.data.payments || []).map(normalizePay));
       setTransfers((res.data.data.transfers || []).map(normalizeTransfer));
       setSponsors((res.data.data.sponsors || []).map(normalizeSponsor));
-      setAllUsers(res.data.data.users || []); // NEW: Store all users
+      setAllUsers(res.data.data.users || []); // Save user list for leaderboard
     }
   };
 
@@ -173,12 +171,19 @@ export default function App() {
     if (res.success) {
       setUser(res.data.user);
       setIsAuthenticated(true);
-      // Wait momentarily for authentication state to propagate, then fetch databases
-      setTimeout(() => {
-        loadInitialData();
-      }, 100);
+      // Save to browser memory
+      localStorage.setItem('auth', 'true');
+      localStorage.setItem('user', JSON.stringify(res.data.user));
+      // Data is automatically fetched via useEffect
     }
     return res.success;
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setUser(null);
+    localStorage.removeItem('auth');
+    localStorage.removeItem('user');
   };
 
   const handleAddSubscription = async (data) => {
@@ -240,7 +245,7 @@ export default function App() {
 
   return (
     // fixed inset-0 completely locks the application strictly into the viewable window area
-    <div className="fixed inset-0 bg-slate-100 flex justify-center font-sans text-slate-800">
+    <div className="fixed inset-0 bg-slate-100 flex justify-center font-sans text-slate-800" style={{ fontFamily: "'Lexend', sans-serif" }}>
       <div className="w-full max-w-md bg-white h-full shadow-2xl relative flex flex-col overflow-hidden">
         
         {/* Header bar */}
@@ -254,13 +259,48 @@ export default function App() {
               <p className="text-indigo-200 text-xs">Logged in as {user?.name || 'Staff'}</p>
             </div>
           </div>
-          <button onClick={() => { setIsAuthenticated(false); setUser(null); }} className="p-2 bg-white/10 rounded-full hover:bg-white/20 transition">
+          <button onClick={handleLogout} className="p-2 bg-white/10 rounded-full hover:bg-white/20 transition">
             <LogOut size={16} />
           </button>
         </header>
 
-        {/* Dynamic Portal Navigation Window */}
-        <main className="flex-1 overflow-y-auto relative bg-slate-50">
+        {/* Dynamic Portal Navigation Window with Custom Pull-To-Refresh */}
+        <main 
+          className="flex-1 overflow-y-auto relative bg-slate-50 touch-pan-y"
+          onTouchStart={(e) => {
+            if (e.currentTarget.scrollTop === 0) {
+              e.currentTarget.dataset.startY = e.touches[0].clientY;
+            } else {
+              e.currentTarget.dataset.startY = '';
+            }
+          }}
+          onTouchMove={(e) => {
+            const startY = parseFloat(e.currentTarget.dataset.startY);
+            if (startY && !isRefreshing) {
+              const diff = e.touches[0].clientY - startY;
+              if (diff > 0) {
+                setPtrHeight(Math.min(diff, 80)); // Cap the visual pull distance
+              }
+            }
+          }}
+          onTouchEnd={async (e) => {
+            if (ptrHeight > 60 && !isRefreshing) {
+              setIsRefreshing(true);
+              setPtrHeight(50); // Hold spinner open slightly
+              await loadInitialData();
+              setIsRefreshing(false);
+            }
+            setPtrHeight(0); // Snap shut
+            e.currentTarget.dataset.startY = '';
+          }}
+        >
+          {/* Refresh Indicator */}
+          <div className="w-full flex justify-center items-center overflow-hidden transition-all duration-200 ease-out" style={{ height: `${ptrHeight}px`, opacity: ptrHeight / 80 }}>
+             <div className={`w-8 h-8 rounded-full bg-white shadow-md flex items-center justify-center text-indigo-600 ${isRefreshing ? 'animate-spin' : ''}`}>
+               <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+             </div>
+          </div>
+
           {notification && (
             <div className={`absolute top-4 left-4 right-4 z-50 p-3 rounded-lg shadow-lg flex items-center space-x-2 text-sm text-white animate-fade-in-down ${notification.type === 'error' ? 'bg-red-500' : 'bg-emerald-500'}`}>
               {notification.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
@@ -271,14 +311,16 @@ export default function App() {
           {activeTab === 'dashboard' && (
             <Dashboard 
               user={user}
-              allUsers={allUsers} // NEW: Pass all users to dashboard
+              allUsers={allUsers}
               allSubscriptions={subscriptions}
               subscriptions={mySubs}
-              cashInHand={cashInHand} 
+              totalBalance={totalBalance}
               totalCashReceived={totalCashReceived}
+              totalOnlineReceived={totalOnlineReceived}
               totalTransferred={totalTransferred}
               totalSubscriptions={totalSubscriptions}
               setActiveTab={setActiveTab}
+              setRecordTab={setRecordTab}
             />
           )}
           {activeTab === 'new' && (
@@ -299,7 +341,9 @@ export default function App() {
               onTransfer={handleAddTransfer}
               onEditSubscription={handleEditSubscription}
               onAddPayment={handleAddPayment}
-              cashInHand={cashInHand}
+              totalBalance={totalBalance}
+              subTab={recordTab}
+              setSubTab={setRecordTab}
             />
           )}
           {activeTab === 'reports' && (
@@ -315,7 +359,7 @@ export default function App() {
         <nav className="shrink-0 w-full bg-white border-t border-slate-200 flex justify-around py-2 px-2 z-20 pb-safe">
           <NavItem icon={<LayoutDashboard />} label="Home" isActive={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
           <NavItem icon={<UserPlus />} label="New Entry" isActive={activeTab === 'new'} onClick={() => setActiveTab('new')} />
-          <NavItem icon={<FileText />} label="Records" isActive={activeTab === 'records'} onClick={() => setActiveTab('records')} />
+          <NavItem icon={<FileText />} label="Records" isActive={activeTab === 'records'} onClick={() => { setActiveTab('records'); setRecordTab('subs'); }} />
           <NavItem icon={<PieChart />} label="Reports" isActive={activeTab === 'reports'} onClick={() => setActiveTab('reports')} />
         </nav>
       </div>
@@ -345,7 +389,7 @@ function Login({ onLogin }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-100 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-slate-100 flex items-center justify-center p-4" style={{ fontFamily: "'Lexend', sans-serif" }}>
       <div className="bg-white max-w-sm w-full rounded-2xl shadow-xl overflow-hidden">
         <div className="bg-indigo-600 p-8 text-center">
           <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner">
@@ -377,152 +421,160 @@ function Login({ onLogin }) {
   );
 }
 
-function Dashboard({ user, allUsers, allSubscriptions, subscriptions, cashInHand, totalCashReceived, totalTransferred, totalSubscriptions, setActiveTab }) {
+function Dashboard({ user, allUsers, allSubscriptions, subscriptions, totalBalance, totalCashReceived, totalOnlineReceived, totalTransferred, totalSubscriptions, setActiveTab, setRecordTab }) {
   const [isLeaderboardExpanded, setIsLeaderboardExpanded] = useState(false);
 
   const myTotal = subscriptions.length;
   const myTarget = user?.target || 25; 
   const targetPercent = Math.min(100, Math.round((myTotal / myTarget) * 100)) || 0;
 
-  // Derive global leaderboard dynamically from ALL users, even those with 0 entries
+  // Derive global leaderboard dynamically from all Users and Entries
   const leaderboardData = useMemo(() => {
-    // 1. Initialize mapping with all known users from backend
+    // 1. Initialize grouped with ALL users from the backend
     const grouped = {};
     allUsers.forEach(u => {
-       grouped[u.id] = { id: u.id, name: u.name, count: 0, target: u.target || 25 };
+       grouped[u.id] = { id: u.id, name: u.name || u.id, count: 0, target: u.target || 25 };
     });
 
-    // 2. Add fallback for current user if not in the list (e.g., during mock testing)
-    if (user && !grouped[user.id]) {
-        grouped[user.id] = { id: user.id, name: user.name || user.id, count: 0, target: user.target || 25 };
-    }
-
-    // 3. Count actual subscriptions
+    // 2. Count entries for those users
     allSubscriptions.forEach(sub => {
       const id = sub.staffId;
       if (id && grouped[id]) {
-          grouped[id].count++;
-      } else if (id) {
-          // Fallback if a staffId exists in subs but wasn't in the Users sheet
-          grouped[id] = { id, name: id, count: 1, target: 25 };
+         grouped[id].count++;
+      } else if (id && !grouped[id]) {
+         // Fallback if a user has entries but isn't in the Users sheet
+         grouped[id] = { id, name: id, count: 1, target: 25 };
       }
     });
 
-    // 4. Calculate percentages and sort
+    // 3. Convert to array, calculate percentage, sort
     return Object.values(grouped)
       .map(u => ({ ...u, percent: Math.min(100, Math.round((u.count / u.target) * 100)) }))
-      .sort((a, b) => b.count - a.count); // Sort highest count first
-  }, [allSubscriptions, user, allUsers]);
+      .sort((a, b) => {
+         // Sort by count descending, then alphabetically by name to break ties
+         if(b.count !== a.count) return b.count - a.count;
+         return a.name.localeCompare(b.name);
+      });
+  }, [allSubscriptions, allUsers]);
 
   return (
-    <div className="p-5 space-y-5 animate-fade-in pb-20">
+    <div className="p-5 space-y-6 animate-fade-in pb-20">
       
-      {/* Redesigned Minimal Horizontal Stats Card */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex divide-x divide-slate-100">
+      {/* Horizontally Split Top Cards */}
+      <div className="flex space-x-4">
         
-        {/* Left Side: Performance */}
-        <div className="flex-1 p-4 flex flex-col justify-center bg-slate-50/50">
-          <div className="flex items-center space-x-2 mb-2">
-            <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
-               <TrendingUp size={12} strokeWidth={3}/>
+        {/* Wallet Summary Restructured */}
+        <div className="flex-1 bg-gradient-to-br from-indigo-600 to-blue-700 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden flex flex-col justify-between">
+          <div className="absolute top-0 right-0 opacity-10 transform translate-x-2 -translate-y-2">
+            <Wallet size={80} />
+          </div>
+          <div>
+            <h3 className="text-indigo-100 text-[10px] font-bold uppercase tracking-wider mb-0.5">Total Balance</h3>
+            <div className="text-2xl font-bold tracking-tight">OMR {totalBalance.toFixed(3)}</div>
+          </div>
+          <div className="flex space-x-3 border-t border-white/20 pt-2 mt-3">
+            <div>
+              <p className="text-indigo-200 text-[9px] uppercase font-bold tracking-wider">Cash</p>
+              <p className="font-semibold text-[11px]">OMR {totalCashReceived.toFixed(3)}</p>
             </div>
-            <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">My Progress</h3>
-          </div>
-          
-          <div className="flex items-baseline space-x-1.5 mb-1.5">
-            <span className="text-2xl font-bold text-indigo-700">{myTotal}</span>
-            <span className="text-xs font-medium text-slate-400">/ {myTarget}</span>
-          </div>
-          
-          <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden flex items-center">
-            <div className="h-1.5 rounded-full transition-all duration-1000 ease-out bg-indigo-500" style={{ width: `${targetPercent}%` }}></div>
+            <div>
+              <p className="text-indigo-200 text-[9px] uppercase font-bold tracking-wider">Bank</p>
+              <p className="font-semibold text-[11px]">OMR {totalOnlineReceived.toFixed(3)}</p>
+            </div>
           </div>
         </div>
 
-        {/* Right Side: Cash in Hand */}
-        <div className="flex-1 p-4 flex flex-col justify-center relative overflow-hidden">
-          <div className="absolute -right-4 -bottom-4 opacity-5">
-             <Wallet size={80} />
+        {/* Personal Performance Minimal */}
+        <div className="w-2/5 bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-col justify-center relative items-center text-center">
+          <h3 className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1">Target</h3>
+          <div className="text-3xl font-bold text-indigo-600 mb-1">{myTotal}<span className="text-sm font-normal text-slate-400">/{myTarget}</span></div>
+          <div className="w-full bg-slate-100 rounded-full h-1.5 mb-1.5 overflow-hidden">
+            <div className="bg-gradient-to-r from-indigo-500 to-emerald-400 h-1.5 rounded-full transition-all duration-1000 delay-300" style={{ width: `${targetPercent}%` }}></div>
           </div>
-          <div className="flex items-center space-x-2 mb-2">
-            <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
-               <Wallet size={12} strokeWidth={3}/>
-            </div>
-            <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">In Hand</h3>
-          </div>
-          
-          <div className="flex items-baseline space-x-1">
-            <span className="text-sm font-semibold text-emerald-600">OMR</span>
-            <span className="text-2xl font-bold text-slate-800 tracking-tight">{cashInHand.toFixed(3)}</span>
-          </div>
+          <div className="text-[10px] font-bold text-emerald-500">{targetPercent}%</div>
+        </div>
+
+      </div>
+
+      {/* Quick Actions */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
+        <h3 className="font-bold text-slate-800 text-sm mb-3 flex items-center">
+          <Calendar size={16} className="mr-2 text-indigo-500" /> Quick Actions
+        </h3>
+        <div className="space-y-2">
+          <button onClick={() => setActiveTab('new')} className="w-full flex items-center justify-between p-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl transition text-sm font-medium text-slate-700">
+            <span className="flex items-center"><UserPlus size={16} className="mr-3 text-indigo-600" /> Registration / Renewal</span>
+            <ChevronRight size={16} className="text-slate-400" />
+          </button>
+          <button onClick={() => { setActiveTab('records'); setRecordTab('transfer'); }} className="w-full flex items-center justify-between p-2.5 bg-slate-50 hover:bg-slate-100 rounded-xl transition text-sm font-medium text-slate-700">
+            <span className="flex items-center"><ArrowRightLeft size={16} className="mr-3 text-emerald-600" /> Transfer Cash</span>
+            <ChevronRight size={16} className="text-slate-400" />
+          </button>
         </div>
       </div>
 
-      {/* Quick Actions (Slimmer) */}
-      <div className="grid grid-cols-2 gap-3">
-          <button onClick={() => setActiveTab('new')} className="flex items-center p-3 bg-white hover:bg-slate-50 border border-slate-100 rounded-xl transition shadow-sm">
-            <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center mr-3 shrink-0">
-              <UserPlus size={16} className="text-indigo-600" /> 
-            </div>
-            <span className="text-xs font-bold text-slate-700 leading-tight">New<br/>Entry</span>
-          </button>
-          <button onClick={() => setActiveTab('records')} className="flex items-center p-3 bg-white hover:bg-slate-50 border border-slate-100 rounded-xl transition shadow-sm">
-             <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center mr-3 shrink-0">
-              <ArrowRightLeft size={16} className="text-emerald-600" />
-            </div>
-            <span className="text-xs font-bold text-slate-700 leading-tight">Transfer<br/>Cash</span>
-          </button>
-      </div>
-
-      {/* Interactive Leaderboard - Minimal Motivation Design */}
+      {/* Interactive Leaderboard */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 relative overflow-hidden transition-all duration-300">
-        <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-50">
+        <div className="flex justify-between items-center mb-3">
           <h3 className="font-bold text-slate-800 flex items-center text-sm">
-            <Trophy size={16} className="mr-2 text-amber-500" /> Leaderboard
+            <Trophy size={16} className="mr-2 text-amber-500 drop-shadow-sm" /> Leaderboard
           </h3>
-          <span className="text-[10px] font-bold tracking-wider bg-slate-100 text-slate-500 px-2 py-1 rounded-full">Top Performers</span>
+          <span className="text-[9px] font-bold tracking-wider uppercase bg-indigo-50 text-indigo-600 px-2 py-1 rounded-full">Global Ranks</span>
         </div>
 
-        <div className="space-y-1">
-          {leaderboardData.slice(0, isLeaderboardExpanded ? leaderboardData.length : 5).map((staff, index) => {
+        <div className="space-y-2">
+          {leaderboardData.slice(0, isLeaderboardExpanded ? leaderboardData.length : 4).map((staff, index) => {
             const isCurrentUser = staff.id === user?.id;
             
-            // Minimal Styling
-            const isTop3 = index < 3;
-            const textStyle = isCurrentUser ? 'font-bold text-indigo-700' : 'font-medium text-slate-600';
-            const percentStyle = staff.percent >= 100 ? 'text-emerald-500 font-bold' : (isCurrentUser ? 'text-indigo-600 font-bold' : 'text-slate-400 font-semibold');
+            // Map styling based on ranking
+            const rankStyle = 
+              index === 0 ? 'bg-amber-100 text-amber-700 border-amber-200 shadow-sm' :
+              index === 1 ? 'bg-slate-100 text-slate-600 border-slate-200' :
+              index === 2 ? 'bg-orange-100 text-orange-700 border-orange-200' :
+              'bg-slate-50 text-slate-400 border-slate-100';
+            
+            const barColor = 
+              index === 0 ? 'bg-gradient-to-r from-amber-400 to-amber-300' :
+              index === 1 ? 'bg-gradient-to-r from-slate-400 to-slate-300' :
+              index === 2 ? 'bg-gradient-to-r from-orange-400 to-orange-300' :
+              'bg-gradient-to-r from-indigo-500 to-blue-400';
 
             return (
-              <div key={staff.id} className={`flex items-center justify-between p-2 rounded-lg transition-all ${isCurrentUser ? 'bg-indigo-50/50' : 'hover:bg-slate-50'}`}>
-                <div className="flex items-center space-x-3">
-                  <div className="w-5 text-center shrink-0">
-                     {index === 0 ? <span className="text-amber-500 font-bold text-sm">1</span> :
-                      index === 1 ? <span className="text-slate-400 font-bold text-sm">2</span> :
-                      index === 2 ? <span className="text-orange-400 font-bold text-sm">3</span> :
-                      <span className="text-slate-300 font-medium text-xs">{index + 1}</span>}
+              <div key={staff.id} className={`flex items-center justify-between p-2 rounded-xl transition-all animate-fade-in ${isCurrentUser ? 'bg-indigo-50/60 ring-1 ring-indigo-200' : 'hover:bg-slate-50'}`}>
+                <div className="flex items-center space-x-3 w-1/2">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border shrink-0 ${rankStyle}`}>
+                    {index + 1}
                   </div>
-                  <div className={`text-sm truncate max-w-[140px] ${textStyle}`}>
-                    {staff.name} {isCurrentUser && <span className="text-[10px] uppercase ml-1 opacity-60">(You)</span>}
+                  <div className="truncate">
+                    <span className={`text-xs font-bold truncate ${isCurrentUser ? 'text-indigo-800' : 'text-slate-700'}`}>
+                      {staff.name} {isCurrentUser && <span className="text-[9px] font-medium text-indigo-500 ml-0.5">(You)</span>}
+                    </span>
                   </div>
                 </div>
-                <div className="flex items-center space-x-3">
-                   <span className="text-xs font-bold text-slate-800 w-6 text-right">{staff.count}</span>
-                   <div className="w-12 bg-slate-100 rounded-full h-1.5 overflow-hidden flex items-center">
-                     <div className={`h-1.5 rounded-full ${isCurrentUser ? 'bg-indigo-500' : (isTop3 ? 'bg-slate-400' : 'bg-slate-300')}`} style={{ width: `${staff.percent}%` }}></div>
-                   </div>
-                   <span className={`text-[10px] w-8 text-right ${percentStyle}`}>{staff.percent}%</span>
+                
+                <div className="w-1/2 flex items-center justify-end space-x-3">
+                  <div className="w-16 bg-slate-100 rounded-full h-1 overflow-hidden flex items-center shrink-0">
+                    <div className={`h-1 rounded-full transition-all duration-1000 ease-out ${barColor}`} style={{ width: `${staff.percent}%` }}></div>
+                  </div>
+                  <div className="text-[10px] font-bold text-slate-600 text-right w-10 shrink-0">
+                    {staff.percent}%
+                  </div>
                 </div>
               </div>
             );
           })}
         </div>
 
-        {leaderboardData.length > 5 && (
+        {leaderboardData.length > 4 && (
           <button
             onClick={() => setIsLeaderboardExpanded(!isLeaderboardExpanded)}
-            className="w-full mt-3 py-2 flex items-center justify-center text-[11px] font-bold text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg transition-all"
+            className="w-full mt-3 py-2 flex items-center justify-center text-[10px] font-bold text-slate-500 bg-slate-50 hover:bg-slate-100 hover:text-slate-700 rounded-lg transition-all"
           >
-            {isLeaderboardExpanded ? 'Show Less' : `View All (${leaderboardData.length})`}
+            {isLeaderboardExpanded ? (
+              <><ChevronUp size={14} className="mr-1"/> Show Less</>
+            ) : (
+              <><ChevronDown size={14} className="mr-1"/> View All ({leaderboardData.length})</>
+            )}
           </button>
         )}
       </div>
@@ -663,7 +715,7 @@ function SubscriptionForm({ onSubmit, onPayment, onAddSponsor, sponsors, subscri
 
 function PaymentModal({ subId, defaultAmount = 3.000, onClose, onPaymentSubmit }) {
   const [amount, setAmount] = useState(defaultAmount);
-  const [type, setType] = useState('Cash');
+  const [type, setType] = useState('Cash'); // Default Cash
   const [loading, setLoading] = useState(false);
 
   const handleUpdate = async () => {
@@ -675,7 +727,7 @@ function PaymentModal({ subId, defaultAmount = 3.000, onClose, onPaymentSubmit }
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" style={{ fontFamily: "'Lexend', sans-serif" }}>
       <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl scale-in">
         <div className="bg-slate-50 p-4 border-b flex justify-between items-center">
           <h3 className="font-bold text-slate-800">Update Payment</h3>
@@ -695,7 +747,7 @@ function PaymentModal({ subId, defaultAmount = 3.000, onClose, onPaymentSubmit }
           <div>
             <label className="text-xs font-semibold text-slate-500 uppercase mb-1 block">Payment Method</label>
             <div className="flex space-x-2">
-              {['Cash', 'Online', 'Cheque'].map(m => (
+              {['Cash', 'Online'].map(m => (
                 <button key={m} type="button" onClick={() => setType(m)} className={`flex-1 py-2 rounded-lg text-sm font-semibold border-2 transition ${type === m ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-slate-100 text-slate-500 hover:bg-slate-50'}`}>
                   {m}
                 </button>
@@ -717,8 +769,7 @@ function PaymentModal({ subId, defaultAmount = 3.000, onClose, onPaymentSubmit }
   );
 }
 
-function Records({ subscriptions, payments, transfers, onTransfer, onEditSubscription, onAddPayment, cashInHand }) {
-  const [subTab, setSubTab] = useState('subs'); // subs, payments, transfer
+function Records({ subscriptions, payments, transfers, onTransfer, onEditSubscription, onAddPayment, totalBalance, subTab, setSubTab }) {
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [editingSub, setEditingSub] = useState(null);
   const [paymentSubId, setPaymentSubId] = useState(null);
@@ -802,8 +853,8 @@ function Records({ subscriptions, payments, transfers, onTransfer, onEditSubscri
           <div className="space-y-4">
             <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 flex justify-between items-center animate-fade-in">
               <div>
-                <p className="text-xs text-indigo-600 font-semibold uppercase mb-1">Cash In Hand</p>
-                <p className="text-2xl font-bold text-indigo-900">OMR {cashInHand.toFixed(3)}</p>
+                <p className="text-xs text-indigo-600 font-semibold uppercase mb-1">Total Available</p>
+                <p className="text-2xl font-bold text-indigo-900">OMR {totalBalance.toFixed(3)}</p>
               </div>
               <button onClick={() => setShowTransferModal(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow hover:bg-indigo-700 transition">
                 Transfer Out
@@ -832,7 +883,7 @@ function Records({ subscriptions, payments, transfers, onTransfer, onEditSubscri
 
       {showTransferModal && (
         <TransferModal 
-          maxAmount={cashInHand} 
+          maxAmount={totalBalance} 
           onClose={() => setShowTransferModal(false)}
           onSubmit={async (data) => {
             const success = await onTransfer(data);
@@ -882,7 +933,7 @@ function EditEntryModal({ sub, onClose, onSubmit }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-end justify-center backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-end justify-center backdrop-blur-sm animate-fade-in" style={{ fontFamily: "'Lexend', sans-serif" }}>
       <div className="bg-white w-full max-w-md h-[90vh] rounded-t-2xl overflow-hidden shadow-2xl animate-slide-up flex flex-col">
         <div className="p-4 border-b flex justify-between items-center bg-slate-50 shrink-0">
           <h3 className="font-bold text-slate-800">Edit Record</h3>
@@ -936,7 +987,7 @@ function TransferModal({ maxAmount, onClose, onSubmit }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-end justify-center backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-end justify-center backdrop-blur-sm animate-fade-in" style={{ fontFamily: "'Lexend', sans-serif" }}>
       <div className="bg-white rounded-t-2xl w-full max-w-md overflow-hidden shadow-2xl animate-slide-up">
         <div className="p-4 border-b flex justify-between items-center">
           <h3 className="font-bold text-slate-800">Transfer Cash</h3>
@@ -998,7 +1049,7 @@ function Reports({ subscriptions, payments }) {
           
           <div>
             <div className="flex justify-between text-sm mb-1">
-              <span className="font-medium text-slate-700">Online / Cheque</span>
+              <span className="font-medium text-slate-700">Online / Bank</span>
               <span className="font-bold">OMR {onlineAmount.toFixed(3)}</span>
             </div>
             <div className="w-full bg-slate-100 rounded-full h-2.5">
@@ -1047,14 +1098,9 @@ function EmptyState({ msg }) {
   );
 }
 
-// Global CSS Animations, Screen Locking, and Lexend Font
+// Global CSS Animations & Screen Locking
 const styles = `
   @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap');
-
-  /* Apply Lexend Font Globally */
-  html, body, #root, * {
-    font-family: 'Lexend', sans-serif !important;
-  }
 
   /* Hard lock the body so the browser frame does not scroll, fixing the off-screen bottom nav */
   html, body, #root {
@@ -1063,6 +1109,7 @@ const styles = `
     height: 100%;
     overflow: hidden;
     overscroll-behavior-y: none;
+    font-family: 'Lexend', sans-serif;
   }
 
   .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
