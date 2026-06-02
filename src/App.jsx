@@ -244,7 +244,7 @@ export default function App() {
               <User size={18} className="text-white" />
             </div>
             <div>
-              <h1 className="font-semibold text-sm leading-tight">Field Staff Portal</h1>
+              <h1 className="font-semibold text-sm leading-tight">Field Entry Portal</h1>
               <p className="text-indigo-200 text-xs">Logged in as {user?.name || 'Staff'}</p>
             </div>
           </div>
@@ -344,7 +344,7 @@ function Login({ onLogin }) {
             <Lock size={32} className="text-indigo-600" />
           </div>
           <h2 className="text-2xl font-bold text-white mb-1">Welcome Back</h2>
-          <p className="text-indigo-200 text-sm">Staff Authentication Portal</p>
+          <p className="text-indigo-200 text-sm">User Authentication Portal</p>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {error && (
@@ -353,7 +353,7 @@ function Login({ onLogin }) {
             </div>
           )}
           <div>
-            <label className="text-xs font-semibold text-slate-500 uppercase">Staff ID / Username</label>
+            <label className="text-xs font-semibold text-slate-500 uppercase">Username</label>
             <input required type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full mt-1 border-b-2 border-slate-200 p-2 focus:outline-none focus:border-indigo-600 transition" placeholder="Enter your ID" />
           </div>
           <div>
