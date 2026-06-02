@@ -3,7 +3,8 @@ import {
   User, Lock, LayoutDashboard, UserPlus, FileText, 
   Wallet, PieChart, LogOut, ChevronRight, CheckCircle2,
   Phone, Mail, MapPin, Search, ArrowRightLeft,
-  X, Check, AlertCircle, TrendingUp, Calendar, Edit2, CreditCard
+  X, Check, AlertCircle, TrendingUp, Calendar, Edit2, CreditCard,
+  Trophy, ChevronDown, ChevronUp
 } from 'lucide-react';
 
 // ==========================================
@@ -19,6 +20,9 @@ const USE_MOCK_BACKEND = false; // Set to false to use your live Google Sheets b
 const mockSubscriptions = [
   { id: 'S1', staffId: 'admin', entryType: 'New', name: 'Ahmed Khan', area: 'Downtown', mobile: '1234567890', whatsapp: '1234567890', email: 'ahmed@example.com', sponsorId: '', date: new Date().toISOString() },
   { id: 'S2', staffId: 'admin', entryType: 'Renewal', name: 'Sarah Ali', area: 'North Hills', mobile: '0987654321', whatsapp: '0987654321', email: 'sarah@example.com', sponsorId: 'SPO-1', date: new Date().toISOString() },
+  { id: 'S3', staffId: 'user1', entryType: 'New', name: 'Zaid', area: 'Uptown', mobile: '1111111111', whatsapp: '', email: '', sponsorId: '', date: new Date().toISOString() },
+  { id: 'S4', staffId: 'user2', entryType: 'New', name: 'Omar', area: 'Southside', mobile: '2222222222', whatsapp: '', email: '', sponsorId: '', date: new Date().toISOString() },
+  { id: 'S5', staffId: 'user2', entryType: 'Renewal', name: 'Hassan', area: 'West End', mobile: '3333333333', whatsapp: '', email: '', sponsorId: '', date: new Date().toISOString() }
 ];
 const mockPayments = [
   { id: 'P1', staffId: 'admin', subId: 'S1', amount: 3.000, type: 'Cash', date: new Date().toISOString() },
@@ -43,6 +47,7 @@ export default function App() {
   const [payments, setPayments] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [sponsors, setSponsors] = useState([]);
+  const [allUsers, setAllUsers] = useState([]); // NEW: State to hold all users for leaderboard
   
   const [isLoading, setIsLoading] = useState(false);
   const [notification, setNotification] = useState(null);
@@ -159,6 +164,7 @@ export default function App() {
       setPayments((res.data.data.payments || []).map(normalizePay));
       setTransfers((res.data.data.transfers || []).map(normalizeTransfer));
       setSponsors((res.data.data.sponsors || []).map(normalizeSponsor));
+      setAllUsers(res.data.data.users || []); // NEW: Store all users
     }
   };
 
@@ -265,6 +271,8 @@ export default function App() {
           {activeTab === 'dashboard' && (
             <Dashboard 
               user={user}
+              allUsers={allUsers} // NEW: Pass all users to dashboard
+              allSubscriptions={subscriptions}
               subscriptions={mySubs}
               cashInHand={cashInHand} 
               totalCashReceived={totalCashReceived}
@@ -369,75 +377,154 @@ function Login({ onLogin }) {
   );
 }
 
-function Dashboard({ user, subscriptions, cashInHand, totalCashReceived, totalTransferred, totalSubscriptions, setActiveTab }) {
+function Dashboard({ user, allUsers, allSubscriptions, subscriptions, cashInHand, totalCashReceived, totalTransferred, totalSubscriptions, setActiveTab }) {
+  const [isLeaderboardExpanded, setIsLeaderboardExpanded] = useState(false);
+
   const myTotal = subscriptions.length;
   const myTarget = user?.target || 25; 
   const targetPercent = Math.min(100, Math.round((myTotal / myTarget) * 100)) || 0;
 
+  // Derive global leaderboard dynamically from ALL users, even those with 0 entries
+  const leaderboardData = useMemo(() => {
+    // 1. Initialize mapping with all known users from backend
+    const grouped = {};
+    allUsers.forEach(u => {
+       grouped[u.id] = { id: u.id, name: u.name, count: 0, target: u.target || 25 };
+    });
+
+    // 2. Add fallback for current user if not in the list (e.g., during mock testing)
+    if (user && !grouped[user.id]) {
+        grouped[user.id] = { id: user.id, name: user.name || user.id, count: 0, target: user.target || 25 };
+    }
+
+    // 3. Count actual subscriptions
+    allSubscriptions.forEach(sub => {
+      const id = sub.staffId;
+      if (id && grouped[id]) {
+          grouped[id].count++;
+      } else if (id) {
+          // Fallback if a staffId exists in subs but wasn't in the Users sheet
+          grouped[id] = { id, name: id, count: 1, target: 25 };
+      }
+    });
+
+    // 4. Calculate percentages and sort
+    return Object.values(grouped)
+      .map(u => ({ ...u, percent: Math.min(100, Math.round((u.count / u.target) * 100)) }))
+      .sort((a, b) => b.count - a.count); // Sort highest count first
+  }, [allSubscriptions, user, allUsers]);
+
   return (
-    <div className="p-5 space-y-6 animate-fade-in">
-      <div className="bg-gradient-to-br from-indigo-600 to-blue-700 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
-        <div className="absolute top-0 right-0 opacity-10 transform translate-x-4 -translate-y-4">
-          <Wallet size={120} />
-        </div>
-        <h3 className="text-indigo-100 text-sm font-medium mb-1">In Hand Cash Balance</h3>
-        <div className="text-4xl font-bold mb-4 tracking-tight">OMR {cashInHand.toFixed(3)}</div>
-        <div className="flex space-x-4 border-t border-white/20 pt-4">
-          <div>
-            <p className="text-indigo-200 text-xs">Total Collected</p>
-            <p className="font-semibold text-sm">OMR {totalCashReceived.toFixed(3)}</p>
-          </div>
-          <div>
-            <p className="text-indigo-200 text-xs">Total Transferred</p>
-            <p className="font-semibold text-sm">OMR {totalTransferred.toFixed(3)}</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 relative">
-        <h3 className="font-semibold text-slate-800 mb-1">My Performance</h3>
-        <p className="text-xs text-slate-500 mb-4">Your personal target completion progress</p>
+    <div className="p-5 space-y-5 animate-fade-in pb-20">
+      
+      {/* Redesigned Minimal Horizontal Stats Card */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex divide-x divide-slate-100">
         
-        <div className="flex justify-between items-end mb-2">
-          <div className="text-3xl font-bold text-indigo-600">{myTotal} <span className="text-sm font-normal text-slate-400">/ {myTarget} Entries</span></div>
-          <div className="text-sm font-semibold text-emerald-500">{targetPercent}%</div>
+        {/* Left Side: Performance */}
+        <div className="flex-1 p-4 flex flex-col justify-center bg-slate-50/50">
+          <div className="flex items-center space-x-2 mb-2">
+            <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+               <TrendingUp size={12} strokeWidth={3}/>
+            </div>
+            <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">My Progress</h3>
+          </div>
+          
+          <div className="flex items-baseline space-x-1.5 mb-1.5">
+            <span className="text-2xl font-bold text-indigo-700">{myTotal}</span>
+            <span className="text-xs font-medium text-slate-400">/ {myTarget}</span>
+          </div>
+          
+          <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden flex items-center">
+            <div className="h-1.5 rounded-full transition-all duration-1000 ease-out bg-indigo-500" style={{ width: `${targetPercent}%` }}></div>
+          </div>
         </div>
-        <div className="w-full bg-slate-100 rounded-full h-3 mb-1 overflow-hidden">
-          <div className="bg-gradient-to-r from-indigo-500 to-emerald-400 h-3 rounded-full transition-all duration-1000" style={{ width: `${targetPercent}%` }}></div>
+
+        {/* Right Side: Cash in Hand */}
+        <div className="flex-1 p-4 flex flex-col justify-center relative overflow-hidden">
+          <div className="absolute -right-4 -bottom-4 opacity-5">
+             <Wallet size={80} />
+          </div>
+          <div className="flex items-center space-x-2 mb-2">
+            <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+               <Wallet size={12} strokeWidth={3}/>
+            </div>
+            <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">In Hand</h3>
+          </div>
+          
+          <div className="flex items-baseline space-x-1">
+            <span className="text-sm font-semibold text-emerald-600">OMR</span>
+            <span className="text-2xl font-bold text-slate-800 tracking-tight">{cashInHand.toFixed(3)}</span>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center text-center">
-          <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-2">
-            <UserPlus size={20} />
-          </div>
-          <p className="text-2xl font-bold text-slate-800">{totalSubscriptions}</p>
-          <p className="text-xs text-slate-500">Your Entries</p>
-        </div>
-        <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center text-center">
-          <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mb-2">
-            <TrendingUp size={20} />
-          </div>
-          <p className="text-2xl font-bold text-slate-800">{targetPercent >= 100 ? 'Achieved' : 'On Track'}</p>
-          <p className="text-xs text-slate-500">Target Status</p>
-        </div>
+      {/* Quick Actions (Slimmer) */}
+      <div className="grid grid-cols-2 gap-3">
+          <button onClick={() => setActiveTab('new')} className="flex items-center p-3 bg-white hover:bg-slate-50 border border-slate-100 rounded-xl transition shadow-sm">
+            <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center mr-3 shrink-0">
+              <UserPlus size={16} className="text-indigo-600" /> 
+            </div>
+            <span className="text-xs font-bold text-slate-700 leading-tight">New<br/>Entry</span>
+          </button>
+          <button onClick={() => setActiveTab('records')} className="flex items-center p-3 bg-white hover:bg-slate-50 border border-slate-100 rounded-xl transition shadow-sm">
+             <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center mr-3 shrink-0">
+              <ArrowRightLeft size={16} className="text-emerald-600" />
+            </div>
+            <span className="text-xs font-bold text-slate-700 leading-tight">Transfer<br/>Cash</span>
+          </button>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
-        <h3 className="font-semibold text-slate-800 mb-4 flex items-center">
-          <Calendar size={18} className="mr-2 text-indigo-500" /> Quick Actions
-        </h3>
-        <div className="space-y-3">
-          <button onClick={() => setActiveTab('new')} className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100 rounded-xl transition text-sm font-medium text-slate-700">
-            <span className="flex items-center"><UserPlus size={16} className="mr-3 text-indigo-600" /> New Registration / Renewal</span>
-            <ChevronRight size={16} className="text-slate-400" />
-          </button>
-          <button onClick={() => setActiveTab('records')} className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100 rounded-xl transition text-sm font-medium text-slate-700">
-            <span className="flex items-center"><ArrowRightLeft size={16} className="mr-3 text-emerald-600" /> Transfer Cash</span>
-            <ChevronRight size={16} className="text-slate-400" />
-          </button>
+      {/* Interactive Leaderboard - Minimal Motivation Design */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 relative overflow-hidden transition-all duration-300">
+        <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-50">
+          <h3 className="font-bold text-slate-800 flex items-center text-sm">
+            <Trophy size={16} className="mr-2 text-amber-500" /> Leaderboard
+          </h3>
+          <span className="text-[10px] font-bold tracking-wider bg-slate-100 text-slate-500 px-2 py-1 rounded-full">Top Performers</span>
         </div>
+
+        <div className="space-y-1">
+          {leaderboardData.slice(0, isLeaderboardExpanded ? leaderboardData.length : 5).map((staff, index) => {
+            const isCurrentUser = staff.id === user?.id;
+            
+            // Minimal Styling
+            const isTop3 = index < 3;
+            const textStyle = isCurrentUser ? 'font-bold text-indigo-700' : 'font-medium text-slate-600';
+            const percentStyle = staff.percent >= 100 ? 'text-emerald-500 font-bold' : (isCurrentUser ? 'text-indigo-600 font-bold' : 'text-slate-400 font-semibold');
+
+            return (
+              <div key={staff.id} className={`flex items-center justify-between p-2 rounded-lg transition-all ${isCurrentUser ? 'bg-indigo-50/50' : 'hover:bg-slate-50'}`}>
+                <div className="flex items-center space-x-3">
+                  <div className="w-5 text-center shrink-0">
+                     {index === 0 ? <span className="text-amber-500 font-bold text-sm">1</span> :
+                      index === 1 ? <span className="text-slate-400 font-bold text-sm">2</span> :
+                      index === 2 ? <span className="text-orange-400 font-bold text-sm">3</span> :
+                      <span className="text-slate-300 font-medium text-xs">{index + 1}</span>}
+                  </div>
+                  <div className={`text-sm truncate max-w-[140px] ${textStyle}`}>
+                    {staff.name} {isCurrentUser && <span className="text-[10px] uppercase ml-1 opacity-60">(You)</span>}
+                  </div>
+                </div>
+                <div className="flex items-center space-x-3">
+                   <span className="text-xs font-bold text-slate-800 w-6 text-right">{staff.count}</span>
+                   <div className="w-12 bg-slate-100 rounded-full h-1.5 overflow-hidden flex items-center">
+                     <div className={`h-1.5 rounded-full ${isCurrentUser ? 'bg-indigo-500' : (isTop3 ? 'bg-slate-400' : 'bg-slate-300')}`} style={{ width: `${staff.percent}%` }}></div>
+                   </div>
+                   <span className={`text-[10px] w-8 text-right ${percentStyle}`}>{staff.percent}%</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {leaderboardData.length > 5 && (
+          <button
+            onClick={() => setIsLeaderboardExpanded(!isLeaderboardExpanded)}
+            className="w-full mt-3 py-2 flex items-center justify-center text-[11px] font-bold text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg transition-all"
+          >
+            {isLeaderboardExpanded ? 'Show Less' : `View All (${leaderboardData.length})`}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -960,8 +1047,15 @@ function EmptyState({ msg }) {
   );
 }
 
-// Global CSS Animations & Screen Locking
+// Global CSS Animations, Screen Locking, and Lexend Font
 const styles = `
+  @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap');
+
+  /* Apply Lexend Font Globally */
+  html, body, #root, * {
+    font-family: 'Lexend', sans-serif !important;
+  }
+
   /* Hard lock the body so the browser frame does not scroll, fixing the off-screen bottom nav */
   html, body, #root {
     margin: 0;
