@@ -313,6 +313,7 @@ export default function App() {
               user={user}
               allUsers={allUsers}
               allSubscriptions={subscriptions}
+              allSponsors={sponsors}
               subscriptions={mySubs}
               totalBalance={totalBalance}
               totalCashReceived={totalCashReceived}
@@ -328,8 +329,8 @@ export default function App() {
               onSubmit={handleAddSubscription} 
               onPayment={handleAddPayment} 
               onAddSponsor={handleAddSponsor}
-              sponsors={mySponsors}
-              subscriptions={mySubs}
+              sponsors={sponsors} // Pass global sponsors so they can be assigned
+              allSubscriptions={subscriptions} // Pass all subs to calculate global sponsor usage
               isLoading={isLoading} 
             />
           )}
@@ -351,6 +352,8 @@ export default function App() {
               subscriptions={mySubs}
               payments={myPayments}
               transfers={myTransfers}
+              allSubscriptions={subscriptions}
+              allSponsors={sponsors}
             />
           )}
         </main>
@@ -421,15 +424,16 @@ function Login({ onLogin }) {
   );
 }
 
-function Dashboard({ user, allUsers, allSubscriptions, subscriptions, totalBalance, totalCashReceived, totalOnlineReceived, totalTransferred, totalSubscriptions, setActiveTab, setRecordTab }) {
+function Dashboard({ user, allUsers, allSubscriptions, allSponsors, subscriptions, totalBalance, totalCashReceived, totalOnlineReceived, totalTransferred, totalSubscriptions, setActiveTab, setRecordTab }) {
   const [isLeaderboardExpanded, setIsLeaderboardExpanded] = useState(false);
+  const [leaderboardType, setLeaderboardType] = useState('entries'); // 'entries' | 'sponsors'
 
   const myTotal = subscriptions.length;
   const myTarget = user?.target || 25; 
   const targetPercent = Math.min(100, Math.round((myTotal / myTarget) * 100)) || 0;
 
   // Derive global leaderboard dynamically from all Users and Entries
-  const leaderboardData = useMemo(() => {
+  const entriesLeaderboardData = useMemo(() => {
     // 1. Initialize grouped with ALL users from the backend
     const grouped = {};
     allUsers.forEach(u => {
@@ -451,11 +455,36 @@ function Dashboard({ user, allUsers, allSubscriptions, subscriptions, totalBalan
     return Object.values(grouped)
       .map(u => ({ ...u, percent: Math.min(100, Math.round((u.count / u.target) * 100)) }))
       .sort((a, b) => {
-         // Sort by count descending, then alphabetically by name to break ties
          if(b.count !== a.count) return b.count - a.count;
          return a.name.localeCompare(b.name);
       });
   }, [allSubscriptions, allUsers]);
+
+  // Derive global leaderboard for Sponsors
+  const sponsorLeaderboardData = useMemo(() => {
+    const grouped = {};
+    allUsers.forEach(u => {
+       grouped[u.id] = { id: u.id, name: u.name || u.id, count: 0 };
+    });
+
+    allSponsors.forEach(sp => {
+      const id = sp.staffId;
+      if (id && grouped[id]) {
+         grouped[id].count += (parseInt(sp.count) || 0);
+      } else if (id && !grouped[id]) {
+         grouped[id] = { id, name: id, count: (parseInt(sp.count) || 0) };
+      }
+    });
+
+    return Object.values(grouped)
+      .sort((a, b) => {
+         if(b.count !== a.count) return b.count - a.count;
+         return a.name.localeCompare(b.name);
+      });
+  }, [allSponsors, allUsers]);
+
+  const activeLeaderboard = leaderboardType === 'entries' ? entriesLeaderboardData : sponsorLeaderboardData;
+  const maxSponsorCount = Math.max(...sponsorLeaderboardData.map(s => s.count), 1);
 
   return (
     <div className="p-5 space-y-6 animate-fade-in pb-20">
@@ -519,12 +548,16 @@ function Dashboard({ user, allUsers, allSubscriptions, subscriptions, totalBalan
           <h3 className="font-bold text-slate-800 flex items-center text-sm">
             <Trophy size={16} className="mr-2 text-amber-500 drop-shadow-sm" /> Leaderboard
           </h3>
-          <span className="text-[9px] font-bold tracking-wider uppercase bg-indigo-50 text-indigo-600 px-2 py-1 rounded-full">Global Ranks</span>
+          <div className="flex bg-slate-100 p-0.5 rounded-lg shrink-0">
+            <button onClick={() => setLeaderboardType('entries')} className={`px-2 py-1 text-[10px] font-bold uppercase rounded-md transition ${leaderboardType === 'entries' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>Entries</button>
+            <button onClick={() => setLeaderboardType('sponsors')} className={`px-2 py-1 text-[10px] font-bold uppercase rounded-md transition ${leaderboardType === 'sponsors' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>Sponsors</button>
+          </div>
         </div>
 
         <div className="space-y-2">
-          {leaderboardData.slice(0, isLeaderboardExpanded ? leaderboardData.length : 4).map((staff, index) => {
+          {activeLeaderboard.slice(0, isLeaderboardExpanded ? activeLeaderboard.length : 4).map((staff, index) => {
             const isCurrentUser = staff.id === user?.id;
+            const isEntries = leaderboardType === 'entries';
             
             // Map styling based on ranking
             const rankStyle = 
@@ -539,9 +572,12 @@ function Dashboard({ user, allUsers, allSubscriptions, subscriptions, totalBalan
               index === 2 ? 'bg-gradient-to-r from-orange-400 to-orange-300' :
               'bg-gradient-to-r from-indigo-500 to-blue-400';
 
+            const displayValue = isEntries ? `${staff.percent}%` : `${staff.count} Risala`;
+            const barWidth = isEntries ? `${staff.percent}%` : `${(staff.count / maxSponsorCount) * 100}%`;
+
             return (
               <div key={staff.id} className={`flex items-center justify-between p-2 rounded-xl transition-all animate-fade-in ${isCurrentUser ? 'bg-indigo-50/60 ring-1 ring-indigo-200' : 'hover:bg-slate-50'}`}>
-                <div className="flex items-center space-x-3 w-1/2">
+                <div className="flex items-center space-x-3 w-[55%]">
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border shrink-0 ${rankStyle}`}>
                     {index + 1}
                   </div>
@@ -552,12 +588,12 @@ function Dashboard({ user, allUsers, allSubscriptions, subscriptions, totalBalan
                   </div>
                 </div>
                 
-                <div className="w-1/2 flex items-center justify-end space-x-3">
+                <div className="w-[45%] flex items-center justify-end space-x-2">
                   <div className="w-16 bg-slate-100 rounded-full h-1 overflow-hidden flex items-center shrink-0">
-                    <div className={`h-1 rounded-full transition-all duration-1000 ease-out ${barColor}`} style={{ width: `${staff.percent}%` }}></div>
+                    <div className={`h-1 rounded-full transition-all duration-1000 ease-out ${barColor}`} style={{ width: barWidth }}></div>
                   </div>
-                  <div className="text-[10px] font-bold text-slate-600 text-right w-10 shrink-0">
-                    {staff.percent}%
+                  <div className="text-[10px] font-bold text-slate-600 text-right min-w-[3rem] shrink-0">
+                    {displayValue}
                   </div>
                 </div>
               </div>
@@ -565,7 +601,7 @@ function Dashboard({ user, allUsers, allSubscriptions, subscriptions, totalBalan
           })}
         </div>
 
-        {leaderboardData.length > 4 && (
+        {activeLeaderboard.length > 4 && (
           <button
             onClick={() => setIsLeaderboardExpanded(!isLeaderboardExpanded)}
             className="w-full mt-3 py-2 flex items-center justify-center text-[10px] font-bold text-slate-500 bg-slate-50 hover:bg-slate-100 hover:text-slate-700 rounded-lg transition-all"
@@ -573,7 +609,7 @@ function Dashboard({ user, allUsers, allSubscriptions, subscriptions, totalBalan
             {isLeaderboardExpanded ? (
               <><ChevronUp size={14} className="mr-1"/> Show Less</>
             ) : (
-              <><ChevronDown size={14} className="mr-1"/> View All ({leaderboardData.length})</>
+              <><ChevronDown size={14} className="mr-1"/> View All ({activeLeaderboard.length})</>
             )}
           </button>
         )}
@@ -582,7 +618,7 @@ function Dashboard({ user, allUsers, allSubscriptions, subscriptions, totalBalan
   );
 }
 
-function SubscriptionForm({ onSubmit, onPayment, onAddSponsor, sponsors, subscriptions, isLoading }) {
+function SubscriptionForm({ onSubmit, onPayment, onAddSponsor, sponsors, allSubscriptions, isLoading }) {
   const [formTab, setFormTab] = useState('subscriber'); // 'subscriber' | 'sponsor'
   const [formData, setFormData] = useState({ entryType: 'New', name: '', area: '', mobile: '', whatsapp: '', email: '', sponsorId: '' });
   const [sponsorData, setSponsorData] = useState({ name: '', count: '' });
@@ -592,8 +628,9 @@ function SubscriptionForm({ onSubmit, onPayment, onAddSponsor, sponsors, subscri
   const [createdSubId, setCreatedSubId] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState(3.000);
   
+  // Calculate globally available sponsors based on all subscriptions in the system
   const availableSponsors = sponsors.map(sp => {
-    const used = subscriptions.filter(s => s.sponsorId === sp.id).length;
+    const used = allSubscriptions.filter(s => s.sponsorId === sp.id).length;
     return { ...sp, available: sp.count - used };
   }).filter(sp => sp.available > 0);
 
@@ -776,7 +813,7 @@ function Records({ subscriptions, payments, transfers, onTransfer, onEditSubscri
 
   return (
     <div className="h-full flex flex-col animate-fade-in">
-      <div className="p-4 bg-white border-b sticky top-0 z-10">
+      <div className="p-4 bg-white border-b sticky top-0 z-10 shrink-0">
         <h2 className="text-xl font-bold text-slate-800 mb-3">Database Records</h2>
         <div className="flex bg-slate-100 p-1 rounded-xl">
           <button onClick={() => setSubTab('subs')} className={`flex-1 py-1.5 text-sm font-semibold rounded-lg transition ${subTab === 'subs' ? 'bg-white shadow text-indigo-600' : 'text-slate-500'}`}>Entries</button>
@@ -789,7 +826,7 @@ function Records({ subscriptions, payments, transfers, onTransfer, onEditSubscri
         {subTab === 'subs' && (
           <div className="space-y-3">
             {subscriptions.map(s => (
-              <div key={s.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-150">
+              <div key={s.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
                 <div className="flex justify-between items-start mb-3">
                   <div>
                     <div className="flex items-center space-x-2">
@@ -805,7 +842,6 @@ function Records({ subscriptions, payments, transfers, onTransfer, onEditSubscri
                   </div>
                 </div>
                 
-                {/* Responsive Action Buttons */}
                 <div className="flex space-x-2 border-t border-slate-50 pt-3">
                   <button onClick={() => setEditingSub(s)} className="flex-1 flex items-center justify-center py-2 bg-slate-50 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-100 transition">
                     <Edit2 size={14} className="mr-1.5" /> Edit Info
@@ -853,7 +889,7 @@ function Records({ subscriptions, payments, transfers, onTransfer, onEditSubscri
           <div className="space-y-4">
             <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 flex justify-between items-center animate-fade-in">
               <div>
-                <p className="text-xs text-indigo-600 font-semibold uppercase mb-1">Total Available</p>
+                <p className="text-xs text-indigo-600 font-semibold uppercase mb-1">Transferable Balance</p>
                 <p className="text-2xl font-bold text-indigo-900">OMR {totalBalance.toFixed(3)}</p>
               </div>
               <button onClick={() => setShowTransferModal(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow hover:bg-indigo-700 transition">
@@ -944,7 +980,7 @@ function EditEntryModal({ sub, onClose, onSubmit }) {
           <form id="editForm" onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-500 uppercase mb-2 ml-1">Entry Type</label>
-              <div className="flex bg-slate-150 p-1 rounded-xl">
+              <div className="flex bg-slate-200 p-1 rounded-xl">
                 <button type="button" onClick={() => setFormData({...formData, entryType: 'New'})} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition ${formData.entryType === 'New' ? 'bg-white shadow text-indigo-600' : 'text-slate-500'}`}>New Entry</button>
                 <button type="button" onClick={() => setFormData({...formData, entryType: 'Renewal'})} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition ${formData.entryType === 'Renewal' ? 'bg-white shadow text-indigo-600' : 'text-slate-500'}`}>Renewal</button>
               </div>
@@ -956,7 +992,7 @@ function EditEntryModal({ sub, onClose, onSubmit }) {
             <InputField icon={<Phone size={18}/>} label="WhatsApp Number" name="whatsapp" type="tel" value={formData.whatsapp} onChange={handleChange} />
             <InputField icon={<Mail size={18}/>} label="Email Address" name="email" type="email" value={formData.email} onChange={handleChange} />
             
-            <div className="text-xs text-slate-500 bg-slate-100 p-3 rounded-lg border border-slate-250 mt-4">
+            <div className="text-xs text-slate-500 bg-slate-100 p-3 rounded-lg border border-slate-200 mt-4">
               <span className="font-semibold text-slate-700">Sponsor ID Reference:</span> {formData.sponsorId || 'Direct Payment Mode'}
             </div>
           </form>
@@ -1012,16 +1048,37 @@ function TransferModal({ maxAmount, onClose, onSubmit }) {
   );
 }
 
-function Reports({ subscriptions, payments }) {
+function Reports({ subscriptions, payments, transfers, allSubscriptions, allSponsors }) {
   const totalAmount = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
   const cashAmount = payments.filter(p => p.type === 'Cash').reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
   const onlineAmount = totalAmount - cashAmount;
+
+  // Calculate global sponsorship statistics
+  const totalSponsored = allSponsors.reduce((sum, sp) => sum + (parseInt(sp.count) || 0), 0);
+  const usedSponsored = allSubscriptions.filter(s => s.sponsorId).length;
+  const availableSponsored = totalSponsored - usedSponsored;
 
   return (
     <div className="p-5 animate-fade-in pb-20">
       <h2 className="text-xl font-bold text-slate-800 mb-6">Performance Report</h2>
       
       <div className="space-y-6">
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Sponsorship Overview</h3>
+          <div className="flex items-center justify-between py-2 border-b border-slate-100">
+            <span className="text-slate-700 text-sm">Total Risala Sponsored</span>
+            <span className="font-bold text-lg text-indigo-600">{totalSponsored}</span>
+          </div>
+          <div className="flex items-center justify-between py-2 border-b border-slate-100">
+            <span className="text-slate-700 text-sm">Used by Subscribers</span>
+            <span className="font-bold text-lg text-amber-500">{usedSponsored}</span>
+          </div>
+          <div className="flex items-center justify-between py-2 border-b border-slate-100">
+            <span className="text-slate-700 text-sm">Available Risala</span>
+            <span className="font-bold text-lg text-emerald-600">{availableSponsored}</span>
+          </div>
+        </div>
+
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
           <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Overall Stats</h3>
           <div className="flex items-center justify-between py-2 border-b border-slate-100">
