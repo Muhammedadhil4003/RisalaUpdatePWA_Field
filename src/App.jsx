@@ -233,7 +233,8 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen h-[100dvh] bg-slate-100 flex justify-center font-sans text-slate-800">
+    // fixed inset-0 completely locks the application strictly into the viewable window area
+    <div className="fixed inset-0 bg-slate-100 flex justify-center font-sans text-slate-800">
       <div className="w-full max-w-md bg-white h-full shadow-2xl relative flex flex-col overflow-hidden">
         
         {/* Header bar */}
@@ -336,7 +337,7 @@ function Login({ onLogin }) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-slate-100 flex items-center justify-center p-4">
       <div className="bg-white max-w-sm w-full rounded-2xl shadow-xl overflow-hidden">
         <div className="bg-indigo-600 p-8 text-center">
           <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner">
@@ -494,7 +495,7 @@ function SubscriptionForm({ onSubmit, onPayment, onAddSponsor, sponsors, subscri
   };
 
   return (
-    <div className="p-5 animate-fade-in">
+    <div className="p-5 animate-fade-in pb-20">
       <div className="mb-6 flex justify-between items-end">
         <div>
           <h2 className="text-xl font-bold text-slate-800">Form Entry</h2>
@@ -879,7 +880,7 @@ function Reports({ subscriptions, payments }) {
   const onlineAmount = totalAmount - cashAmount;
 
   return (
-    <div className="p-5 animate-fade-in">
+    <div className="p-5 animate-fade-in pb-20">
       <h2 className="text-xl font-bold text-slate-800 mb-6">Performance Report</h2>
       
       <div className="space-y-6">
@@ -959,8 +960,17 @@ function EmptyState({ msg }) {
   );
 }
 
-// Global CSS Animations Injection
+// Global CSS Animations & Screen Locking
 const styles = `
+  /* Hard lock the body so the browser frame does not scroll, fixing the off-screen bottom nav */
+  html, body, #root {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior-y: none;
+  }
+
   .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   @keyframes fadeInDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
